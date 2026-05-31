@@ -1,39 +1,36 @@
 function [svmModel, tfidfModel, metrics, evaluationResults] = loadModel(modelPath)
-%LOADMODEL Load saved fake news detection model artifacts.
+%LOADMODEL Load fake news detection model artifacts.
 %
 % Description:
 %   [svmModel, tfidfModel, metrics, evaluationResults] =
-%   loadModel(modelPath) loads a saved model artifact created by
-%   saveModel.m and validates that all required variables are present.
+%   loadModel(modelPath) loads a persisted fake news detection model from a
+%   MAT file. The trained classifier and TF-IDF model are required. Training
+%   metrics and evaluation results are optional and default to empty structs
+%   when they are not present in the saved artifact.
 %
 % Inputs:
-%   modelPath - Optional string scalar or character vector path to the MAT
-%               file. Default: models/fake_news_model.mat
+%   modelPath - Optional MAT-file path. If omitted or empty, the model is
+%               loaded from models/fake_news_model.mat.
 %
 % Outputs:
-%   svmModel          - Trained classifier.
-%   tfidfModel        - TF-IDF bag-of-words model.
-%   metrics           - Training metrics structure.
-%   evaluationResults - Evaluation metrics structure.
+%   svmModel          - Loaded trained classifier.
+%   tfidfModel        - Loaded bag-of-words / TF-IDF model.
+%   metrics           - Loaded training metrics struct, or struct() if not
+%                       present.
+%   evaluationResults - Loaded evaluation results struct, or struct() if not
+%                       present.
 %
 % TODO:
-%   - Validate saved model version once version metadata is introduced.
-%   - Add compatibility checks for MATLAB/toolbox versions.
-%   - Add optional loading of auxiliary metadata.
+%   - Add savedAt/version compatibility checks.
+%   - Add MATLAB and toolbox version metadata validation.
+%   - Add optional integrity validation for saved artifacts.
 
 try
-    %% Resolve Model Path
+    %% Resolve Input Path
     if nargin < 1 || isempty(modelPath)
         modelPath = defaultModelPath();
     else
-        modelPath = string(modelPath);
-
-        if ~isscalar(modelPath) || strlength(strtrim(modelPath)) == 0
-            error("loadModel:InvalidModelPath", ...
-                "modelPath must be a non-empty string scalar or character vector.");
-        end
-
-        modelPath = char(modelPath);
+        modelPath = normalizeModelPath(modelPath, "loadModel");
     end
 
     %% Validate File Exists
@@ -42,15 +39,13 @@ try
             "Model file was not found at: %s", modelPath);
     end
 
-    %% Load and Validate Required Variables
+    %% Load Artifact and Validate Required Variables
     modelData = load(modelPath);
-    requiredVariables = ["svmModel", "tfidfModel", "metrics", "evaluationResults"];
+    requiredVariables = ["svmModel", "tfidfModel"];
     validateRequiredVariables(modelData, requiredVariables);
 
     svmModel = modelData.svmModel;
     tfidfModel = modelData.tfidfModel;
-    metrics = modelData.metrics;
-    evaluationResults = modelData.evaluationResults;
 
     if isempty(svmModel)
         error("loadModel:EmptySVMModel", ...
@@ -62,33 +57,40 @@ try
             "Loaded tfidfModel is empty.");
     end
 
-    if ~isstruct(metrics)
-        error("loadModel:InvalidMetrics", ...
-            "Loaded metrics variable must be a struct.");
+    %% Load Optional Variables
+    % Older or partial model artifacts may not contain metrics. Return empty
+    % structs so downstream code can safely check field availability.
+    if isfield(modelData, "metrics") && isstruct(modelData.metrics)
+        metrics = modelData.metrics;
+    else
+        metrics = struct();
     end
 
-    if ~isstruct(evaluationResults)
-        error("loadModel:InvalidEvaluationResults", ...
-            "Loaded evaluationResults variable must be a struct.");
+    if isfield(modelData, "evaluationResults") && isstruct(modelData.evaluationResults)
+        evaluationResults = modelData.evaluationResults;
+    else
+        evaluationResults = struct();
     end
 
     %% Print Loading Summary
-    fprintf("\nModel Load Summary\n");
-    fprintf("------------------\n");
-    fprintf("Model path: %s\n", modelPath);
+    fprintf("\nModel loaded successfully.\n");
+    fprintf("Loaded file: %s\n", modelPath);
 
-    if isfield(modelData, "timestamp")
-        fprintf("Timestamp : %s\n", string(modelData.timestamp));
+    if isfield(modelData, "savedAt")
+        fprintf("Saved at   : %s\n", string(modelData.savedAt));
     else
-        fprintf("Timestamp : Not available\n");
+        fprintf("Saved at   : Not available\n");
     end
 
-    fprintf("Status    : Loaded successfully\n\n");
+    fprintf("Metrics loaded           : %s\n", string(~isempty(fieldnames(metrics))));
+    fprintf("Evaluation results loaded: %s\n\n", ...
+        string(~isempty(fieldnames(evaluationResults))));
 
 catch ME
     % Error handling placeholder:
     % TODO:
-    %   - Add structured persistence logging and compatibility diagnostics.
+    %   - Add structured persistence logging.
+    %   - Add diagnostics for incompatible model artifact versions.
     fprintf(2, "Model loading failed: %s\n", ME.message);
     rethrow(ME);
 end
@@ -96,7 +98,7 @@ end
 end
 
 function validateRequiredVariables(modelData, requiredVariables)
-%VALIDATEREQUIREDVARIABLES Ensure the MAT file contains required variables.
+%VALIDATEREQUIREDVARIABLES Ensure required variables exist in loaded data.
 
 availableVariables = string(fieldnames(modelData));
 missingVariables = setdiff(requiredVariables, availableVariables);
@@ -110,10 +112,30 @@ end
 end
 
 function modelPath = defaultModelPath()
-%DEFAULTMODELPATH Build the default repository-local model path.
+%DEFAULTMODELPATH Return the repository-local default model path.
 
 projectRoot = fileparts(fileparts(fileparts(mfilename("fullpath"))));
 modelPath = fullfile(projectRoot, "models", "fake_news_model.mat");
 
 end
 
+function modelPath = normalizeModelPath(modelPath, callerName)
+%NORMALIZEMODELPATH Validate and convert a path input to a character vector.
+
+errorId = char(string(callerName) + ":InvalidModelPath");
+
+if ~(isstring(modelPath) || ischar(modelPath))
+    error(errorId, ...
+        "modelPath must be a string scalar or character vector.");
+end
+
+modelPath = string(modelPath);
+
+if ~isscalar(modelPath) || strlength(strtrim(modelPath)) == 0
+    error(errorId, ...
+        "modelPath must be a non-empty string scalar or character vector.");
+end
+
+modelPath = char(modelPath);
+
+end

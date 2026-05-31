@@ -1,34 +1,36 @@
 function saveModel(svmModel, tfidfModel, metrics, evaluationResults, modelPath)
-%SAVEMODEL Save trained fake news detection model artifacts.
+%SAVEMODEL Save fake news detection model artifacts.
 %
 % Description:
 %   saveModel(svmModel, tfidfModel, metrics, evaluationResults, modelPath)
-%   saves the trained classifier, TF-IDF bag-of-words model, training
-%   metrics, evaluation metrics, and a timestamp to a MAT file.
+%   saves the trained classifier, TF-IDF bag-of-words model, optional
+%   training metrics, optional evaluation results, and a save timestamp to a
+%   MAT file.
 %
 % Inputs:
-%   svmModel          - Trained classifier returned by trainSVM.m.
-%   tfidfModel        - TF-IDF bag-of-words model returned by extractTFIDF.m.
-%   metrics           - Training metrics structure returned by trainSVM.m.
-%   evaluationResults - Evaluation metrics structure returned by
-%                       evaluateModel.m.
-%   modelPath         - Optional string scalar or character vector path to
-%                       the output MAT file. Default:
-%                       models/fake_news_model.mat
+%   svmModel          - Required trained classifier returned by trainSVM.m.
+%   tfidfModel        - Required bag-of-words model returned by
+%                       extractTFIDF.m.
+%   metrics           - Optional training metrics struct. If omitted or
+%                       empty, an empty struct is saved.
+%   evaluationResults - Optional evaluation results struct. If omitted or
+%                       empty, an empty struct is saved.
+%   modelPath         - Optional output path. If omitted or empty, the model
+%                       is saved to models/fake_news_model.mat.
 %
 % Outputs:
-%   None. Artifacts are saved to disk.
+%   None.
 %
 % TODO:
 %   - Add model version metadata.
-%   - Add dataset hash or training configuration metadata.
-%   - Add optional compression or separate artifact files for large models.
+%   - Add training configuration and dataset checksum metadata.
+%   - Add compatibility checks before overwriting existing model artifacts.
 
 try
     %% Validate Required Inputs
-    if nargin < 4
+    if nargin < 2
         error("saveModel:MissingInput", ...
-            "svmModel, tfidfModel, metrics, and evaluationResults are required.");
+            "svmModel and tfidfModel are required inputs.");
     end
 
     if isempty(svmModel)
@@ -39,28 +41,28 @@ try
         error("saveModel:EmptyTFIDFModel", "tfidfModel must not be empty.");
     end
 
-    if ~isstruct(metrics)
+    %% Normalize Optional Inputs
+    % Metrics are useful for traceability, but a model can still be saved
+    % before formal evaluation has been run.
+    if nargin < 3 || isempty(metrics)
+        metrics = struct();
+    elseif ~isstruct(metrics)
         error("saveModel:InvalidMetrics", ...
-            "metrics must be a struct returned by trainSVM.m.");
+            "metrics must be a struct when provided.");
     end
 
-    if ~isstruct(evaluationResults)
+    if nargin < 4 || isempty(evaluationResults)
+        evaluationResults = struct();
+    elseif ~isstruct(evaluationResults)
         error("saveModel:InvalidEvaluationResults", ...
-            "evaluationResults must be a struct returned by evaluateModel.m.");
+            "evaluationResults must be a struct when provided.");
     end
 
-    %% Resolve Model Path
+    %% Resolve Output Path
     if nargin < 5 || isempty(modelPath)
         modelPath = defaultModelPath();
     else
-        modelPath = string(modelPath);
-
-        if ~isscalar(modelPath) || strlength(strtrim(modelPath)) == 0
-            error("saveModel:InvalidModelPath", ...
-                "modelPath must be a non-empty string scalar or character vector.");
-        end
-
-        modelPath = char(modelPath);
+        modelPath = normalizeModelPath(modelPath, "saveModel");
     end
 
     modelFolder = fileparts(modelPath);
@@ -69,29 +71,28 @@ try
         mkdir(modelFolder);
     end
 
-    %% Save Model Artifacts
-    % Timestamp is stored with the artifact so future training runs can be
-    % traced and compared without relying on file-system metadata.
-    timestamp = datetime("now", "Format", "yyyy-MM-dd HH:mm:ss");
+    %% Save Model Artifact
+    % savedAt records when the artifact was written, independent of file
+    % system metadata that can change when files are copied.
+    savedAt = datetime("now");
 
     save(modelPath, ...
         "svmModel", ...
         "tfidfModel", ...
         "metrics", ...
         "evaluationResults", ...
-        "timestamp", ...
+        "savedAt", ...
         "-v7.3");
 
     %% Print Save Summary
-    fprintf("\nModel Save Summary\n");
-    fprintf("------------------\n");
-    fprintf("Model path: %s\n", modelPath);
-    fprintf("Timestamp : %s\n\n", string(timestamp));
+    fprintf("\nModel saved successfully.\n");
+    fprintf("Saved file: %s\n\n", modelPath);
 
 catch ME
     % Error handling placeholder:
     % TODO:
-    %   - Add structured persistence logging and save retry behavior.
+    %   - Add structured persistence logging.
+    %   - Add optional overwrite protection and retry behavior.
     fprintf(2, "Model saving failed: %s\n", ME.message);
     rethrow(ME);
 end
@@ -99,10 +100,30 @@ end
 end
 
 function modelPath = defaultModelPath()
-%DEFAULTMODELPATH Build the default repository-local model path.
+%DEFAULTMODELPATH Return the repository-local default model path.
 
 projectRoot = fileparts(fileparts(fileparts(mfilename("fullpath"))));
 modelPath = fullfile(projectRoot, "models", "fake_news_model.mat");
 
 end
 
+function modelPath = normalizeModelPath(modelPath, callerName)
+%NORMALIZEMODELPATH Validate and convert a path input to a character vector.
+
+errorId = char(string(callerName) + ":InvalidModelPath");
+
+if ~(isstring(modelPath) || ischar(modelPath))
+    error(errorId, ...
+        "modelPath must be a string scalar or character vector.");
+end
+
+modelPath = string(modelPath);
+
+if ~isscalar(modelPath) || strlength(strtrim(modelPath)) == 0
+    error(errorId, ...
+        "modelPath must be a non-empty string scalar or character vector.");
+end
+
+modelPath = char(modelPath);
+
+end
