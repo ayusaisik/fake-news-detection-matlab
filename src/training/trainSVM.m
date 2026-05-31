@@ -3,29 +3,34 @@ function [svmModel, metrics] = trainSVM(X, labels)
 %
 % Description:
 %   [svmModel, metrics] = trainSVM(X, labels) splits a labeled TF-IDF
-%   dataset into training and testing partitions, trains a linear Support
-%   Vector Machine classifier, evaluates it on the held-out test set, and
+%   dataset into training and testing partitions, trains a linear SVM-style
+%   classifier using fitclinear, evaluates it on the held-out test set, and
 %   returns the trained model with core performance metrics.
 %
 % Inputs:
-%   X      - Numeric TF-IDF feature matrix where rows represent articles and
-%            columns represent vocabulary features.
-%   labels - Binary class labels for each article:
+%   X      - Sparse numeric TF-IDF feature matrix where rows represent
+%            articles and columns represent vocabulary features.
+%   labels - Numeric or categorical binary class labels for each article:
 %            0 = Fake
 %            1 = Real
 %
 % Outputs:
-%   svmModel - Trained linear SVM classification model.
+%   svmModel - Trained linear classification model using the SVM learner.
 %   metrics  - Structure containing:
 %              metrics.accuracy
 %              metrics.confusionMatrix
+%              metrics.trainSampleCount
+%              metrics.testSampleCount
+%              metrics.predictions
+%              metrics.trueLabels
 %
 % TODO:
-%   - Add cross-validation for hyperparameter selection.
+%   - Add cross-validation for regularization strength selection.
 %   - Add class weighting for imbalanced datasets.
 %   - Save trained model artifacts under models/.
 %   - Add precision, recall, and F1-score metrics.
-%   - Add tests for invalid dimensions and single-class labels.
+%   - Add tests for invalid dimensions, categorical labels, and single-class
+%     labels.
 
 try
     if nargin < 2
@@ -58,9 +63,9 @@ try
         error("trainSVM:EmptyLabels", "labels must not be empty.");
     end
 
-    if ~(isnumeric(labels) || islogical(labels))
+    if ~(isnumeric(labels) || islogical(labels) || iscategorical(labels))
         error("trainSVM:InvalidLabelType", ...
-            "labels must be numeric or logical binary values.");
+            "labels must be numeric, logical, or categorical binary values.");
     end
 
     labels = labels(:);
@@ -71,15 +76,38 @@ try
             size(X, 1), numel(labels));
     end
 
-    labels = double(labels);
+    % Convert labels to categorical for a stable classification contract.
+    % Numeric/logical labels are validated before conversion so the expected
+    % project mapping remains explicit: 0 = Fake, 1 = Real.
+    if iscategorical(labels)
+        labelCategories = categories(labels);
 
-    validLabelValues = [0; 1];
-    observedLabelValues = unique(labels);
+        if numel(labelCategories) ~= 2
+            error("trainSVM:InvalidCategoricalLabels", ...
+                "Categorical labels must contain exactly two categories representing 0 = Fake and 1 = Real.");
+        end
 
-    if any(~ismember(observedLabelValues, validLabelValues))
-        error("trainSVM:InvalidLabelValues", ...
-            "labels must contain only binary values: 0 = Fake, 1 = Real.");
+        labels = categorical(labels);
+    else
+        labels = double(labels);
+
+        if any(~isfinite(labels))
+            error("trainSVM:InvalidLabelValues", ...
+                "Numeric labels must not contain NaN or Inf values.");
+        end
+
+        validLabelValues = [0; 1];
+        observedNumericLabels = unique(labels);
+
+        if any(~ismember(observedNumericLabels, validLabelValues))
+            error("trainSVM:InvalidLabelValues", ...
+                "Numeric labels must contain only binary values: 0 = Fake, 1 = Real.");
+        end
+
+        labels = categorical(labels, validLabelValues, ["Fake", "Real"]);
     end
+
+    observedLabelValues = categories(removecats(labels));
 
     if numel(observedLabelValues) < 2
         error("trainSVM:SingleClassLabels", ...
@@ -100,31 +128,39 @@ try
     XTest = X(testIdx, :);
     yTest = labels(testIdx);
 
-    %% Train Linear SVM
-    % Standardization centers and scales features using the training data,
-    % which improves numerical stability for SVM optimization.
-    svmModel = fitcsvm( ...
+    %% Train Linear SVM-Style Classifier
+    % fitclinear is preferred over fitcsvm for sparse, high-dimensional
+    % TF-IDF data. It is designed for large linear classification problems
+    % and accepts sparse predictor matrices directly, avoiding the memory
+    % cost of converting X to a full matrix.
+    svmModel = fitclinear( ...
         XTrain, ...
         yTrain, ...
-        "KernelFunction", "linear", ...
-        "Standardize", true, ...
-        "ClassNames", [0; 1]);
+        "Learner", "svm", ...
+        "Regularization", "ridge", ...
+        "Solver", "dual");
 
     %% Evaluate on Held-Out Test Set
     predictedLabels = predict(svmModel, XTest);
 
     accuracy = mean(predictedLabels == yTest);
-    confusionMatrix = confusionmat(yTest, predictedLabels, "Order", [0; 1]);
+    classNames = categories(labels);
+    classOrder = categorical(classNames, classNames);
+    confusionMatrix = confusionmat(yTest, predictedLabels, "Order", classOrder);
 
     metrics = struct();
     metrics.accuracy = accuracy;
     metrics.confusionMatrix = confusionMatrix;
+    metrics.trainSampleCount = sum(trainIdx);
+    metrics.testSampleCount = sum(testIdx);
+    metrics.predictions = predictedLabels;
+    metrics.trueLabels = yTest;
 
     %% Print Training Summary
     fprintf("\nSVM Training Summary\n");
     fprintf("--------------------\n");
-    fprintf("Training samples: %d\n", sum(trainIdx));
-    fprintf("Testing samples : %d\n", sum(testIdx));
+    fprintf("Training samples: %d\n", metrics.trainSampleCount);
+    fprintf("Testing samples : %d\n", metrics.testSampleCount);
     fprintf("Accuracy        : %.4f\n\n", accuracy);
 
 catch ME
