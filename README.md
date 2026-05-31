@@ -1,96 +1,103 @@
 # Fake News Detection System
 
 ![MATLAB](https://img.shields.io/badge/MATLAB-R2024a-orange)
-![Text Analytics](https://img.shields.io/badge/Text%20Analytics-Toolbox-blue)
-![Machine Learning](https://img.shields.io/badge/Machine%20Learning-Linear%20SVM-green)
-![Status](https://img.shields.io/badge/Status-Portfolio%20Project-brightgreen)
+![Text Analytics Toolbox](https://img.shields.io/badge/Text%20Analytics-Toolbox-blue)
+![Machine Learning](https://img.shields.io/badge/Classifier-Linear%20SVM-green)
+![GUI](https://img.shields.io/badge/GUI-Programmatic%20MATLAB-lightgrey)
 
 ## Project Overview
 
-The **Fake News Detection System** is a MATLAB-based natural language processing and machine learning project that classifies news articles as **Fake** or **Real** using statistical language patterns.
+**Fake News Detection System** is a MATLAB machine learning project that classifies news articles as **Fake** or **Real** using text preprocessing, TF-IDF feature extraction, and a Linear SVM classifier.
 
-The system uses text preprocessing, TF-IDF feature extraction, and a sparse linear SVM-style classifier trained with MATLAB R2024a. It also includes a programmatic MATLAB GUI for interactive predictions.
+The project includes a complete training pipeline, model evaluation utilities, model save/load support, single-news prediction, and a programmatic MATLAB GUI for interactive use.
 
-Important: this project does **not** perform real-time fact-checking. The model detects patterns learned from historical training data and should be treated as a statistical classifier, not an authority on truth.
+This system is a statistical text classifier. It does **not** perform real-time fact-checking and does not verify claims against the internet, news databases, or external sources.
 
 ## Key Features
 
-- End-to-end fake news classification pipeline
-- Dataset loading from separate fake and real CSV files
-- Text cleaning and preprocessing
-- TF-IDF feature extraction
-- Sparse high-dimensional linear SVM-style classification
-- Train/test evaluation with accuracy and confusion matrix
-- Model persistence with save/load utilities
-- Programmatic MATLAB GUI, no `.mlapp` file required
-- Sample prediction workflow
+- Load `Fake.csv` and `True.csv`
+- Merge and label fake/real datasets
+- Create combined article text from title and body
+- Clean and preprocess raw text
+- Extract sparse TF-IDF features
+- Train a Linear SVM classifier using `fitclinear`
+- Calculate accuracy
+- Generate confusion matrix visualization
+- Save and load trained model artifacts
+- Predict a single news article
+- Use a programmatic MATLAB GUI for prediction
 
 ## Technology Stack
 
 - MATLAB R2024a
 - Text Analytics Toolbox
 - Statistics and Machine Learning Toolbox
-- TF-IDF feature engineering
-- Linear SVM-style classifier using `fitclinear`
-- MATLAB programmatic GUI using `uifigure`
+- TF-IDF
+- Linear SVM using `fitclinear`
+- Programmatic MATLAB GUI using `uifigure`
 
 ## Dataset
 
 This project uses the **Kaggle Fake and Real News Dataset**.
 
-Expected raw files:
+Expected dataset files:
 
 ```text
 data/raw/Fake.csv
 data/raw/True.csv
 ```
 
-Required columns:
+Expected columns:
 
 ```text
 title
 text
 ```
 
-During loading, the system creates:
+The loader creates:
 
 - `Label = 0` for fake news
 - `Label = 1` for real news
 - `FullText = title + " " + text`
 
+Large dataset files may be excluded from GitHub depending on repository settings and `.gitignore` rules. If the raw CSV files are not included, download them from Kaggle and place them in `data/raw/`.
+
 ## Machine Learning Pipeline
 
 ```text
-Raw Dataset
-    |
-    v
-Load Fake.csv and True.csv
-    |
-    v
-Create Labels and FullText
-    |
-    v
+Fake.csv + True.csv
+        |
+        v
+Load, Validate, Label, Merge
+        |
+        v
+Create FullText
+        |
+        v
 Preprocess Text
-    |
-    v
-Tokenize and Remove Stop Words
-    |
-    v
+        |
+        v
+Tokenize Documents
+        |
+        v
+Build Bag-of-Words Model
+        |
+        v
 Extract TF-IDF Features
-    |
-    v
-Align Valid Documents and Labels
-    |
-    v
-Train Sparse Linear SVM
-    |
-    v
-Evaluate Model
-    |
-    v
-Save Model
-    |
-    v
+        |
+        v
+Align Labels With Valid Documents
+        |
+        v
+Train Linear SVM with fitclinear
+        |
+        v
+Evaluate Accuracy + Confusion Matrix
+        |
+        v
+Save Model Artifacts
+        |
+        v
 Predict New News Text
 ```
 
@@ -104,6 +111,7 @@ fake-news-detection-matlab/
 |   |-- raw/
 |   `-- processed/
 |-- models/
+|   `-- fake_news_model.mat
 |-- reports/
 |-- results/
 |   `-- confusion_matrix.png
@@ -128,78 +136,73 @@ fake-news-detection-matlab/
 `-- requirements.md
 ```
 
+Trained model files such as `models/fake_news_model.mat` may be excluded from GitHub if ignored by `.gitignore`. Run the training pipeline to regenerate them.
+
 ## Model Performance
 
-Final reported model results:
+Final model performance on the held-out test split:
 
 | Metric | Value |
 | --- | ---: |
 | Training samples | 35,407 |
 | Testing samples | 8,851 |
-| Accuracy | 99.14% |
+| Accuracy | approximately 99.14% |
 
-The model performs strongly on the held-out test split from the Kaggle dataset. Performance may vary on newer articles, out-of-domain sources, or adversarially written content.
-
-## Confusion Matrix
-
-Class mapping:
+Classes:
 
 - `0 = Fake`
 - `1 = Real`
 
-Confusion matrix:
-
-```text
-[[4536,   32],
- [  51, 4232]]
-```
+If available, the confusion matrix image is saved at:
 
 ![Confusion Matrix](results/confusion_matrix.png)
 
-## How to Run
+## How to Run the Full Pipeline
 
 1. Open MATLAB R2024a.
 2. Set the current folder to the project root.
-3. Place the dataset files in `data/raw/`:
+3. Place the Kaggle dataset files here:
 
 ```text
 data/raw/Fake.csv
 data/raw/True.csv
 ```
 
-4. Run the full pipeline:
+4. Run:
 
 ```matlab
 run("main.m")
 ```
 
-The pipeline will:
+The pipeline will load the dataset, preprocess text, extract TF-IDF features, train the Linear SVM model, evaluate performance, save the model, and run sample predictions.
 
-- Load and validate the dataset
-- Preprocess text
-- Extract TF-IDF features
-- Train the model
-- Evaluate performance
-- Save the trained model to `models/fake_news_model.mat`
-- Run sample predictions
+The saved model is written to:
 
-## How to Use GUI
+```text
+models/fake_news_model.mat
+```
 
-After training and saving the model, launch the programmatic GUI:
+## How to Use the GUI
+
+Run the full pipeline first so the trained model exists at:
+
+```text
+models/fake_news_model.mat
+```
+
+Then launch the GUI:
 
 ```matlab
 run app/FakeNewsDetectionApp.m
 ```
 
-In the GUI:
+The GUI loads the saved model using `loadModel()`. Enter a news article into the text area, click **Predict**, and the app will display:
 
-1. Enter or paste news text into the text area.
-2. Click **Predict**.
-3. View the predicted class:
-   - `FAKE NEWS`
-   - `REAL NEWS`
-4. View the confidence score.
-5. Click **Clear** to reset the input and output fields.
+- `FAKE NEWS`
+- `REAL NEWS`
+- Confidence score
+
+Use **Clear** to reset the input and output fields.
 
 ## Example Prediction
 
@@ -213,34 +216,35 @@ Example output:
 
 ```text
 Prediction Result
-Predicted Class : Real
-Confidence Score: 98.42%
+Predicted class : Real
+Confidence score: 0.9824
 ```
 
-The exact confidence score may vary depending on the trained model artifact and feature vocabulary.
+Exact predictions and confidence values depend on the trained model artifact, vocabulary, and input text.
 
-## Limitations
+## Important Limitations
 
-- The model is based on statistical language patterns, not real-time fact-checking.
-- It does not verify claims against live sources or trusted databases.
-- It may perform poorly on topics, writing styles, or news sources not represented in the training data.
-- It can be sensitive to dataset bias.
-- Confidence scores are probability-like and should not be interpreted as calibrated truth probabilities.
-- Highly edited, paraphrased, or adversarial text may reduce prediction reliability.
+This model does **not** perform real-time fact-checking. It does not verify whether a news article is objectively true or false using the internet or external sources.
+
+The classifier learns linguistic and statistical patterns from the training dataset. It performs best on full-length news articles that resemble the Kaggle dataset style.
+
+Short inputs, headlines, social media posts, opinion snippets, very recent events, or text from very different domains may produce lower-confidence or less reliable predictions.
+
+Confidence scores are margin-based signals from a Linear SVM-style classifier. They should not be interpreted as calibrated probabilities of truth.
 
 ## Future Improvements
 
-- Add model calibration for more reliable confidence scores
-- Add cross-validation and hyperparameter tuning
-- Add precision, recall, and F1-score tracking across multiple runs
-- Add support for n-grams and alternative feature extraction strategies
-- Compare linear SVM with logistic regression, naive Bayes, and transformer-based models
-- Add automated tests for each pipeline stage
-- Add dataset versioning and experiment tracking
-- Add exportable reports for model evaluation
-- Improve GUI with model metadata and batch prediction support
+- Add calibrated probability estimates
+- Add cross-validation and hyperparameter search
+- Add precision, recall, and F1-score tracking in the README
+- Add automated unit tests for each module
+- Add batch prediction support
+- Add experiment tracking and dataset versioning
+- Compare Linear SVM with logistic regression and transformer-based models
+- Improve GUI with model metadata and input diagnostics
+- Add support for exporting reports
 
 ## License
 
-This project is provided for educational and portfolio purposes. Add a project-specific license file before distributing or reusing the code in production.
+This project is provided for educational and portfolio purposes. Add a dedicated license file before distributing, publishing, or using the project in production.
 
