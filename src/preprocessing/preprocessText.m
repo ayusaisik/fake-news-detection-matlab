@@ -57,7 +57,7 @@ try
 
     % Remove punctuation and numbers. The whitespace replacement prevents
     % adjacent words from being accidentally concatenated.
-    cleanedText = regexprep(cleanedText, "[[:punct:]]", " ");
+    cleanedText = regexprep(cleanedText, "[^\w\s]", " ");
     cleanedText = regexprep(cleanedText, "\d+", " ");
 
     % Collapse repeated whitespace and trim document boundaries before

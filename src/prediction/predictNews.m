@@ -3,30 +3,26 @@ function [predictedLabel, confidenceScore] = predictNews(newsText, svmModel, tfi
 %
 % Description:
 %   [predictedLabel, confidenceScore] = predictNews(newsText, svmModel,
-%   tfidfModel) preprocesses a single news article, converts it into a
-%   TF-IDF feature vector using the existing training vocabulary, and
-%   predicts the class with the trained linear SVM-style model.
+%   tfidfModel) preprocesses a single news article, tokenizes it, computes
+%   TF-IDF features using the trained bag-of-words model vocabulary, and
+%   predicts whether the article is fake or real.
 %
 % Inputs:
-%   newsText   - String scalar containing the news article text to classify.
-%   svmModel   - Trained model returned by trainSVM.m.
-%   tfidfModel - Bag-of-words model returned by extractTFIDF.m.
+%   newsText   - String scalar containing the news article text.
+%   svmModel   - Trained linear classifier returned by trainSVM.m.
+%   tfidfModel - Trained bag-of-words model returned by extractTFIDF.m.
 %
 % Outputs:
-%   predictedLabel   - Numeric class label:
-%                      0 = Fake
-%                      1 = Real
-%   confidenceScore  - Probability-like confidence score in the range
-%                      [0, 1], derived from the model classification score.
+%   predictedLabel  - Numeric class label:
+%                     0 = Fake
+%                     1 = Real
+%   confidenceScore - Margin-based confidence score in [0, 1]. This is not
+%                     a calibrated probability.
 %
-% Notes:
-%   This function must use the same preprocessing policy as training. It
-%   calls preprocessText.m before constructing inference features.
-%
-% TODO:
-%   - Calibrate confidence scores with posterior probabilities if required.
-%   - Persist and reuse TF-IDF inverse document frequency settings.
-%   - Add tests for empty input, unseen vocabulary, and model output types.
+% Important:
+%   Do not create a new bagOfWords model during prediction. This function
+%   uses tfidf(tfidfModel, inferenceDocument), which applies MATLAB's TF-IDF
+%   workflow with the trained vocabulary and IDF factors.
 
 try
     %% Validate Inputs
@@ -56,9 +52,9 @@ try
     validateTFIDFModel(tfidfModel);
 
     %% Apply Training-Time Preprocessing
-    % predictNews lives in src/prediction while preprocessText lives in
-    % src/preprocessing. Add that folder locally if the caller has not
-    % already configured the MATLAB path.
+    % This must match the preprocessing used before extractTFIDF.m during
+    % training. Keeping preprocessing centralized avoids training/inference
+    % drift.
     projectRoot = fileparts(fileparts(fileparts(mfilename("fullpath"))));
     preprocessingDir = fullfile(projectRoot, "src", "preprocessing");
 
@@ -66,52 +62,99 @@ try
         addpath(preprocessingDir);
     end
 
-    processedText = preprocessText(newsText);
+    processedText = strtrim(preprocessText(newsText));
 
-    if strlength(strtrim(processedText)) == 0
+    if strlength(processedText) == 0
         error("predictNews:EmptyAfterPreprocessing", ...
             "newsText is empty after preprocessing and cannot be classified.");
     end
 
-    %% Convert Text to Existing-Vocabulary TF-IDF Features
-    % The inference document must be encoded with the training vocabulary.
-    % This keeps the feature order and dimensionality aligned with the model
-    % trained by trainSVM.m.
+    %% Tokenize and Compute TF-IDF with the Trained Vocabulary
     inferenceDocument = tokenizedDocument(processedText);
-    termCounts = encode(tfidfModel, inferenceDocument);
 
-    if nnz(termCounts) == 0
+    % encode is used only for debug diagnostics and vocabulary-overlap
+    % checks. It does not define the model features.
+    termCounts = sparse(encode(tfidfModel, inferenceDocument));
+    recognizedVocabularyTermCount = nnz(termCounts);
+    recognizedTermOccurrences = full(sum(termCounts, 2));
+    totalTokenCount = doclength(inferenceDocument);
+
+    if recognizedTermOccurrences == 0
         error("predictNews:NoKnownVocabulary", ...
             "The input text contains no words from the trained TF-IDF vocabulary.");
     end
 
-    XNew = computeTFIDFFromTrainingModel(termCounts, tfidfModel);
+    vocabularyOverlapRatio = recognizedTermOccurrences / max(totalTokenCount, 1);
 
-    %% Predict with Trained Model
-    % fitclinear returns classification scores. These scores are not
-    % calibrated probabilities, so the confidence value below is a
-    % probability-like score produced by a sigmoid transform.
-    [modelLabel, modelScore] = predict(svmModel, XNew);
-
-    predictedLabel = normalizePredictedLabel(modelLabel);
-    confidenceScore = computeConfidenceScore(modelScore, predictedLabel);
-
-    %% Print Prediction Summary
-    className = "Fake";
-
-    if predictedLabel == 1
-        className = "Real";
+    if vocabularyOverlapRatio < 0.50
+        fprintf(2, "Warning: The input text has low vocabulary overlap with the trained model.\n");
     end
 
+    % Critical inference step:
+    % Use MATLAB's tfidf function with the trained bag model and the new
+    % tokenized document. This preserves vocabulary order and uses the same
+    % TF-IDF weighting behavior as tfidf(tfidfModel) used during training.
+    XNew = sparse(tfidf(tfidfModel, inferenceDocument));
+
+    if size(XNew, 2) ~= tfidfModel.NumWords
+        error("predictNews:VocabularyDimensionMismatch", ...
+            "Prediction feature columns (%d) do not match tfidfModel.NumWords (%d).", ...
+            size(XNew, 2), tfidfModel.NumWords);
+    end
+
+    validateModelFeatureCount(svmModel, XNew);
+
+    %% Predict with Trained Model
+    confidenceScore = NaN;
+    modelScore = [];
+
+    try
+        [modelLabel, modelScore] = predict(svmModel, XNew);
+    catch scoreME
+        % Some model objects may only support one output from predict. In
+        % that case, prediction can still proceed but confidence is unknown.
+        if strcmp(scoreME.identifier, "MATLAB:maxlhs")
+            modelLabel = predict(svmModel, XNew);
+        else
+            rethrow(scoreME);
+        end
+    end
+
+    predictedLabel = normalizePredictedLabel(modelLabel);
+    predictedClass = labelToClassName(predictedLabel);
+
+    if ~isempty(modelScore)
+        scoreMargin = getPredictedClassMargin(modelScore, modelLabel, svmModel);
+
+        % fitclinear with Learner="svm" returns classification scores, not
+        % calibrated posterior probabilities. This confidence is a bounded
+        % margin-based signal: larger absolute margins indicate stronger
+        % separation from the decision boundary.
+        confidenceScore = 1 / (1 + exp(-abs(scoreMargin)));
+    end
+
+    %% Print Debug-Friendly Prediction Summary
     fprintf("\nPrediction Result\n");
     fprintf("-----------------\n");
-    fprintf("Predicted Class : %s\n", className);
-    fprintf("Confidence Score: %.4f\n\n", confidenceScore);
+    fprintf("Processed text              : %s\n", processedText);
+    fprintf("Recognized vocabulary terms : %d\n", recognizedVocabularyTermCount);
+    fprintf("Recognized term occurrences : %d of %d\n", ...
+        recognizedTermOccurrences, totalTokenCount);
+    fprintf("Predicted class             : %s\n", predictedClass);
+
+    if isempty(modelScore)
+        fprintf("Model score                 : Unavailable\n");
+        fprintf("Confidence score            : Confidence unavailable\n\n");
+    else
+        fprintf("Model score                 : %s\n", mat2str(modelScore, 4));
+        fprintf("Confidence score            : %.4f\n\n", confidenceScore);
+    end
 
 catch ME
     % Error handling placeholder:
     % TODO:
-    %   - Add structured prediction logging and user-facing recovery tips.
+    %   - Add structured prediction logging.
+    %   - Add compatibility checks for model artifacts saved by older runs.
     fprintf(2, "News prediction failed: %s\n", ME.message);
     rethrow(ME);
 end
@@ -119,7 +162,7 @@ end
 end
 
 function validateTFIDFModel(tfidfModel)
-%VALIDATETFIDFMODEL Validate the bag-of-words model needed for inference.
+%VALIDATETFIDFMODEL Validate the trained bag-of-words model for inference.
 
 requiredProperties = ["Vocabulary", "Counts", "NumDocuments", "NumWords"];
 
@@ -137,22 +180,25 @@ end
 
 end
 
-function XNew = computeTFIDFFromTrainingModel(termCounts, tfidfModel)
-%COMPUTETFIDFFROMTRAININGMODEL Build one sparse TF-IDF row for inference.
+function validateModelFeatureCount(svmModel, XNew)
+%VALIDATEMODELFEATURECOUNT Ensure inference features match model predictors.
 
-termCounts = sparse(termCounts);
+expectedFeatureCount = [];
 
-% Reuse the training document frequencies to approximate the TF-IDF
-% weighting used during training while keeping the original vocabulary
-% order. The smoothed form avoids division by zero and behaves safely when
-% the vocabulary is pruned.
-documentFrequency = full(sum(tfidfModel.Counts > 0, 1));
-numDocuments = tfidfModel.NumDocuments;
-inverseDocumentFrequency = log((numDocuments + 1) ./ (documentFrequency + 1)) + 1;
+if isprop(svmModel, "NumPredictors")
+    expectedFeatureCount = svmModel.NumPredictors;
+elseif isprop(svmModel, "Beta")
+    expectedFeatureCount = numel(svmModel.Beta);
+else
+    fprintf(2, "Warning: Could not verify model feature count from svmModel metadata.\n");
+    expectedFeatureCount = size(XNew, 2);
+end
 
-termFrequency = termCounts ./ max(sum(termCounts, 2), 1);
-XNew = termFrequency .* sparse(inverseDocumentFrequency);
-XNew = sparse(XNew);
+if ~isempty(expectedFeatureCount) && size(XNew, 2) ~= expectedFeatureCount
+    error("predictNews:FeatureDimensionMismatch", ...
+        "Prediction feature columns (%d) do not match expected model predictors (%d).", ...
+        size(XNew, 2), expectedFeatureCount);
+end
 
 end
 
@@ -184,13 +230,8 @@ end
 
 end
 
-function confidenceScore = computeConfidenceScore(modelScore, predictedLabel)
-%COMPUTECONFIDENCESCORE Convert model score output to a bounded score.
-
-if isempty(modelScore)
-    confidenceScore = NaN;
-    return;
-end
+function scoreMargin = getPredictedClassMargin(modelScore, modelLabel, svmModel)
+%GETPREDICTEDCLASSMARGIN Return the score associated with predicted class.
 
 modelScore = double(modelScore);
 
@@ -198,17 +239,59 @@ if isvector(modelScore)
     modelScore = modelScore(:).';
 end
 
-if size(modelScore, 2) >= 2
-    % For binary classifiers, MATLAB commonly returns one score per class.
-    % Use the score associated with the predicted class.
-    scoreIndex = predictedLabel + 1;
-    rawScore = modelScore(1, scoreIndex);
-else
-    rawScore = modelScore(1);
+if isempty(modelScore)
+    scoreMargin = NaN;
+    return;
 end
 
-% Sigmoid transformation gives a probability-like confidence while avoiding
-% a claim of calibrated posterior probability.
-confidenceScore = 1 ./ (1 + exp(-abs(rawScore)));
+if size(modelScore, 2) == 1
+    scoreMargin = modelScore(1);
+    return;
+end
+
+predictedLabel = normalizePredictedLabel(modelLabel);
+scoreIndex = predictedLabel + 1;
+
+% Prefer svmModel.ClassNames when available because it preserves the model's
+% actual score-column ordering.
+if isprop(svmModel, "ClassNames")
+    classNames = svmModel.ClassNames;
+    classLabels = strings(size(classNames));
+
+    for i = 1:numel(classNames)
+        classLabels(i) = string(classNames(i));
+    end
+
+    if predictedLabel == 0
+        matchIndex = find(classLabels == "Fake" | classLabels == "0", 1);
+    else
+        matchIndex = find(classLabels == "Real" | classLabels == "1", 1);
+    end
+
+    if ~isempty(matchIndex)
+        scoreIndex = matchIndex;
+    end
+end
+
+if scoreIndex > size(modelScore, 2)
+    error("predictNews:ScoreDimensionMismatch", ...
+        "Predicted class score index exceeds available model score columns.");
+end
+
+scoreMargin = modelScore(1, scoreIndex);
+
+end
+
+function className = labelToClassName(predictedLabel)
+%LABELTOCLASSNAME Convert numeric model label to user-facing class name.
+
+if predictedLabel == 0
+    className = "Fake";
+elseif predictedLabel == 1
+    className = "Real";
+else
+    error("predictNews:UnexpectedPrediction", ...
+        "Predicted label must be 0 = Fake or 1 = Real.");
+end
 
 end
