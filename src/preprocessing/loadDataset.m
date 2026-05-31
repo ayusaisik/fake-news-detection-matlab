@@ -12,7 +12,7 @@ function combinedDataset = loadDataset()
 %
 % Outputs:
 %   combinedDataset - Shuffled table containing both fake and true news
-%                     samples with a numeric Label column.
+%                     samples with FullText and numeric Label columns.
 %
 % Label Mapping:
 %   Fake.csv -> 0
@@ -20,7 +20,6 @@ function combinedDataset = loadDataset()
 %
 % TODO:
 %   - Add configurable dataset paths.
-%   - Add schema validation for required text columns.
 %   - Add duplicate-row detection and reporting.
 %   - Add optional export to data/processed/.
 %   - Add unit tests for missing files and malformed CSV files.
@@ -41,6 +40,18 @@ try
     fakeDataset = readtable(fakeFilePath, "TextType", "string");
     trueDataset = readtable(trueFilePath, "TextType", "string");
 
+    %% Validate Required Columns
+    requiredColumns = ["title", "text"];
+    validateRequiredColumns(fakeDataset, requiredColumns, "Fake.csv");
+    validateRequiredColumns(trueDataset, requiredColumns, "True.csv");
+
+    %% Create Full Text Field
+    % FullText provides the canonical text input for downstream
+    % preprocessing and feature extraction.
+    fakeDataset.FullText = fakeDataset.title + " " + fakeDataset.text;
+    trueDataset.FullText = trueDataset.title + " " + trueDataset.text;
+    fullTextCreationStatus = "Yes";
+
     %% Assign Labels
     fakeDataset.Label = zeros(height(fakeDataset), 1);
     trueDataset.Label = ones(height(trueDataset), 1);
@@ -54,7 +65,7 @@ try
     end
 
     %% Shuffle Dataset
-    rng("default");
+    rng(42);
     shuffledRowOrder = randperm(height(combinedDataset));
     combinedDataset = combinedDataset(shuffledRowOrder, :);
 
@@ -79,6 +90,7 @@ try
     fprintf("Real samples      : %d\n", realSamplesCount);
     fprintf("Missing values    : %d\n", missingValuesCount);
     fprintf("Columns           : %d\n", width(combinedDataset));
+    fprintf("FullText created  : %s\n", fullTextCreationStatus);
     fprintf("Dataset shuffled  : Yes\n\n");
 
 catch ME
@@ -88,6 +100,20 @@ catch ME
     %   - Add optional recovery guidance for common dataset schema issues.
     fprintf(2, "Dataset loading failed: %s\n", ME.message);
     rethrow(ME);
+end
+
+end
+
+function validateRequiredColumns(inputTable, requiredColumns, datasetName)
+%VALIDATEREQUIREDCOLUMNS Ensure a table contains all required variables.
+
+availableColumns = string(inputTable.Properties.VariableNames);
+missingColumns = setdiff(requiredColumns, availableColumns);
+
+if ~isempty(missingColumns)
+    error("loadDataset:MissingRequiredColumn", ...
+        "%s is missing required column(s): %s", ...
+        datasetName, strjoin(missingColumns, ", "));
 end
 
 end
@@ -109,4 +135,3 @@ missingMask = ismissing(inputTable);
 missingValuesCount = sum(missingMask, "all");
 
 end
-
