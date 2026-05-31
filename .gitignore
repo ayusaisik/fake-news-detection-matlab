@@ -1,0 +1,42 @@
+# MATLAB autosave and temporary files
+*.asv
+*.m~
+*.mlx~
+*.slx.autosave
+*.autosave
+
+# MATLAB generated cache and build artifacts
+codegen/
+slprj/
+sccprj/
+*.mex*
+*.p
+*.mltbx
+*.mlappinstall
+
+# MATLAB data and model artifacts
+*.mat
+models/*
+!models/.gitkeep
+
+# Results and generated outputs
+results/*
+!results/.gitkeep
+reports/*.pdf
+reports/*.png
+reports/*.jpg
+reports/*.jpeg
+reports/*.fig
+
+# Cache files
+.cache/
+cache/
+*.cache
+*.tmp
+*.temp
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
